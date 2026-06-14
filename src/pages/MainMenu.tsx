@@ -16,6 +16,7 @@ import { StarField } from '../components/StarField';
 import { Button } from '../components/ui/Button';
 import { TopBar } from '../components/HUD/TopBar';
 import { useGameStore } from '../store/useGameStore';
+import { useBattleStore } from '../store/battleStore';
 import { useUIGlobalStore } from '../store/useUIGlobalStore';
 
 const ShipLeftSVG = () => (
@@ -75,6 +76,7 @@ export function MainMenu() {
   const navigate = useNavigate();
   const profile = useGameStore((s) => s.profile);
   const battleArchive = useGameStore((s) => s.battleArchive);
+  const { id: battleId, finished: battleFinished, stageId: battleStageId } = useBattleStore();
   const { openSettingsModal } = useUIGlobalStore();
 
   useEffect(() => {
@@ -85,6 +87,7 @@ export function MainMenu() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [navigate]);
 
+  const canContinue = battleId && !battleFinished && battleStageId;
   const hasSave = battleArchive.length > 0;
 
   return (
@@ -172,12 +175,11 @@ export function MainMenu() {
             <Button
               size="lg"
               variant="primary"
-              disabled={!hasSave}
+              disabled={!canContinue}
               className="!px-10 !py-5 !text-lg"
               onClick={() => {
-                if (hasSave) {
-                  const latest = battleArchive[0];
-                  navigate(`/battle/${latest.stageId}`);
+                if (canContinue) {
+                  navigate(`/battle/${battleStageId}`);
                 }
               }}
             >

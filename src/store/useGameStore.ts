@@ -8,6 +8,7 @@ import { RECIPES } from '../data/recipes';
 import { STAGES } from '../data/stages';
 import { MISSIONS } from '../data/missions';
 import { STORIES } from '../data/stories';
+import { refreshShipStats } from '../utils/equipmentStats';
 import type {
   GameState,
   PlayerProfile,
@@ -37,7 +38,7 @@ interface GameActions {
   upgradeTalent: (crewId: string, talentId: string) => boolean;
   craftEquipment: (recipeId: string) => boolean;
   claimMission: (missionId: string) => boolean;
-  updateMissionProgress: (trackType: Mission['trackType'], amount?: number) => void;
+  updateMissionProgress: (trackType: Mission['trackType'], optionsOrAmount?: number | { amount?: number; stageId?: string }) => void;
   unlockStage: (stageId: string) => void;
   completeStage: (stageId: string, starRating: 0 | 1 | 2 | 3) => void;
   unlockStory: (storyId: string) => void;
@@ -47,6 +48,8 @@ interface GameActions {
   saveGame: () => void;
   resetGame: () => void;
   getMaterialsById: (ids: string[]) => Record<string, { id: string; name: string }>;
+  addMaterials: (materials: { id: string; quantity: number }[]) => void;
+  addEquipments: (equipments: Equipment[]) => void;
 }
 
 type GameStore = GameState & GameActions;
@@ -58,22 +61,49 @@ const calcExpForLevel = (level: number): number => {
 const getInitialState = (): GameState => {
   const now = Date.now();
 
-  const initialPlayerShips: Ship[] = SHIPS.filter((s) => s.faction !== 'enemy').slice(0, 8).map((ship) => ({
-    ...ship,
-    id: `player-${ship.id}`,
-    position: undefined,
-    faction: 'player' as const,
-    statusEffects: [],
-  }));
-
-  const activeFleetIds = initialPlayerShips.slice(0, 3).map((s) => s.id);
-
   const initialCrews: Crew[] = CREWS.map((crew) => ({
     ...crew,
     id: `player-${crew.id}`,
     talents: crew.talents.map((t) => ({ ...t })),
     skills: crew.skills.map((s) => ({ ...s })),
   }));
+
+  const initialPlayerShips: Ship[] = SHIPS.filter((s) => s.faction !== 'enemy').slice(0, 8).map((ship, idx) => {
+    const shipCrews: string[] = [];
+    if (idx === 0 && initialCrews[0]) shipCrews.push(initialCrews[0].id);
+    if (idx === 0 && initialCrews[1]) shipCrews.push(initialCrews[1].id);
+    if (idx === 1 && initialCrews[2]) shipCrews.push(initialCrews[2].id);
+    if (idx === 2 && initialCrews[3]) shipCrews.push(initialCrews[3].id);
+    if (idx === 2 && initialCrews[4]) shipCrews.push(initialCrews[4].id);
+
+    const crewIds = ship.crewIds.length > 0 ? ship.crewIds : shipCrews;
+    initialCrews.forEach((c) => {
+      if (crewIds.includes(c.id) && !c.shipId) {
+        c.shipId = `player-${ship.id}`;
+      }
+    });
+
+    return {
+      ...ship,
+      id: `player-${ship.id}`,
+      position: undefined,
+      faction: 'player' as const,
+      statusEffects: [],
+      crewIds,
+      baseStats: {
+        maxHp: ship.maxHp,
+        maxShield: ship.maxShield,
+        attack: ship.attack,
+        defense: ship.defense,
+        speed: ship.speed,
+        moveRange: ship.moveRange,
+        attackRange: ship.attackRange,
+        maxActionPoints: ship.maxActionPoints,
+      },
+    };
+  });
+
+  const activeFleetIds = initialPlayerShips.slice(0, 3).map((s) => s.id);
 
   const initialEquipments: Equipment[] = EQUIPMENTS.map((eq) => ({
     ...eq,
@@ -229,6 +259,9 @@ export const useGameStore = create<GameStore>()(
           newEquipments[eqIdx].equipped = true;
           newEquipments[eqIdx].shipId = shipId;
 
+          const refreshed = refreshShipStats(newShips[shipIdx], newEquipments);
+          newShips[shipIdx] = refreshed;
+
           return {
             ships: newShips,
             equipments: newEquipments,
@@ -270,6 +303,9 @@ export const useGameStore = create<GameStore>()(
             });
             newShips[shipIdx].moduleIds = [];
           }
+
+          const refreshed = refreshShipStats(newShips[shipIdx], newEquipments);
+          newShips[shipIdx] = refreshed;
 
           return {
             ships: newShips,
@@ -555,10 +591,19 @@ export const useGameStore = create<GameStore>()(
         return true;
       },
 
-      updateMissionProgress: (trackType, amount = 1) =>
+      updateMissionProgress: (trackType, optionsOrAmount) =>
         set((state) => {
+          let amount = 1;
+          let stageId: string | undefined;
+          if (typeof optionsOrAmount === 'number') {
+            amount = optionsOrAmount;
+          } else if (optionsOrAmount) {
+            amount = optionsOrAmount.amount ?? 1;
+            stageId = optionsOrAmount.stageId;
+          }
           const newMissions = state.missions.map((m) => {
             if (m.trackType !== trackType || m.completed) return m;
+            if (m.requiredStageId && stageId && m.requiredStageId !== stageId) return m;
             const newProgress = Math.min(m.progress + amount, m.target);
             return {
               ...m,
@@ -666,6 +711,45 @@ export const useGameStore = create<GameStore>()(
         });
         return result;
       },
+
+      addMaterials: (materials) =>
+        set((state) => {
+          const newMaterials = [...state.materials];
+          materials.forEach((item) => {
+            const idx = newMaterials.findIndex((m) => m.id === item.id);
+            if (idx !== -1) {
+              newMaterials[idx] = {
+                ...newMaterials[idx],
+                quantity: newMaterials[idx].quantity + item.quantity,
+              };
+            } else {
+              const template = MATERIALS.find((m) => m.id === item.id);
+              if (template) {
+                newMaterials.push({
+                  ...template,
+                  quantity: item.quantity,
+                });
+              }
+            }
+          });
+          return {
+            materials: newMaterials,
+            profile: { ...state.profile, lastSaveTime: Date.now() },
+          };
+        }),
+
+      addEquipments: (equipments) =>
+        set((state) => {
+          const newEquipments = equipments.map((eq) => ({
+            ...eq,
+            id: `player-${eq.id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            equipped: false,
+          }));
+          return {
+            equipments: [...state.equipments, ...newEquipments],
+            profile: { ...state.profile, lastSaveTime: Date.now() },
+          };
+        }),
     }),
     {
       name: 'staryuan-tactics-save',

@@ -13,12 +13,12 @@ export function calculateDamage(
 
   for (const effect of attacker.statusEffects) {
     if (effect.statsMod.attack) {
-      atk += effect.statsMod.attack;
+      atk += atk * effect.statsMod.attack / 100;
     }
   }
   for (const effect of defender.statusEffects) {
     if (effect.statsMod.defense) {
-      def += effect.statsMod.defense;
+      def += def * effect.statsMod.defense / 100;
     }
   }
 
@@ -36,12 +36,12 @@ export function calculateHitChance(attacker: Ship, defender: Ship): number {
 
   for (const effect of attacker.statusEffects) {
     if (effect.statsMod.speed) {
-      atkSpeed += effect.statsMod.speed;
+      atkSpeed += atkSpeed * effect.statsMod.speed / 100;
     }
   }
   for (const effect of defender.statusEffects) {
     if (effect.statsMod.speed) {
-      defSpeed += effect.statsMod.speed;
+      defSpeed += defSpeed * effect.statsMod.speed / 100;
     }
   }
 

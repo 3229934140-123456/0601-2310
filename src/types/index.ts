@@ -81,6 +81,16 @@ export interface Ship {
   statusEffects: StatusEffect[];
   faction?: 'player' | 'enemy';
   sprite?: string;
+  baseStats?: {
+    maxHp: number;
+    maxShield: number;
+    attack: number;
+    defense: number;
+    speed: number;
+    moveRange: number;
+    attackRange: number;
+    maxActionPoints: number;
+  };
 }
 
 export interface Crew {
@@ -218,6 +228,7 @@ export interface Mission {
   };
   storyUnlock?: string;
   trackType: 'stage_cleared' | 'ship_destroyed' | 'crew_recruited' | 'star_coins_earned' | 'battle_won';
+  requiredStageId?: string;
 }
 
 export interface StoryNode {

@@ -8,7 +8,8 @@ import { ProgressBar } from '../components/ui/ProgressBar';
 import { useBattleStore } from '../store/battleStore';
 import { useGameStore } from '../store/useGameStore';
 import { useUIGlobalStore } from '../store/useUIGlobalStore';
-import type { Ship, Position } from '../types';
+import { EQUIPMENTS } from '../data/equipment';
+import type { Ship, Position, Equipment, Skill } from '../types';
 import { posKey } from '../utils/gridUtils';
 import { getRarityColor, getRarityTextClass } from '../utils/rarityColors';
 
@@ -45,16 +46,16 @@ export function Battle() {
   const initDoneRef = useRef(false);
 
   const {
-    stage, turn, phase, playerFleet, enemyFleet, gridSize, environmentTiles,
-    battleLog, selectedShipId, validMoves, validTargets, actionMode,
+    id, stage, turn, phase, playerFleet, enemyFleet, gridSize, environmentTiles,
+    battleLog, selectedShipId, validMoves, validTargets, actionMode, activeSkillId,
     finished, victory, floatingDamage,
     initBattle, selectShip, setActionMode, moveShip, attackTarget, useSkill,
     repairShip, endTurn, resetBattle,
   } = useBattleStore();
 
-  const { ships, activeFleetIds, profile, stages, completeStage, addStarCoins, gainExp,
+  const { ships, activeFleetIds, crews, profile, stages, completeStage, addStarCoins, gainExp,
     updateMissionProgress, unlockStage, addBattleArchive, setLastBattleResult,
-    getMaterialsById } = useGameStore();
+    getMaterialsById, addMaterials, addEquipments, equipments } = useGameStore();
   const { addToast } = useUIGlobalStore();
 
   const [showReplay, setShowReplay] = useState(false);
@@ -67,11 +68,23 @@ export function Battle() {
     const st = stages.find((x) => x.id === stageId);
     if (!st) { addToast('error', '未找到关卡'); navigate('/starmap'); return; }
     if (!st.unlocked) { addToast('error', '该关卡尚未解锁'); navigate('/starmap'); return; }
-    const fleet = ships.filter((s) => activeFleetIds.includes(s.id));
-    if (fleet.length === 0) { addToast('warning', '请先在舰队编成中配置出战舰队'); navigate('/fleet'); return; }
-    initBattle(st, fleet, profile);
+    
+    const hasExistingBattle = id && stageId === stageId && !finished;
+    
+    if (hasExistingBattle && (!stage || !profile)) {
+      useBattleStore.setState({ stage: st, profile });
+      initDoneRef.current = true;
+      return;
+    }
+    
+    if (!hasExistingBattle) {
+      const fleet = ships.filter((s) => activeFleetIds.includes(s.id));
+      if (fleet.length === 0) { addToast('warning', '请先在舰队编成中配置出战舰队'); navigate('/fleet'); return; }
+      initBattle(st, fleet, profile);
+    }
+    
     initDoneRef.current = true;
-  }, [stageId, stages, ships, activeFleetIds, profile, initBattle, navigate, addToast]);
+  }, [stageId, stages, ships, activeFleetIds, profile, initBattle, navigate, addToast, id, stage, finished]);
 
   // 日志自动滚动
   useEffect(() => {
@@ -96,6 +109,7 @@ export function Battle() {
     const starCoin = victory ? Math.floor(rw.starCoins * (0.7 + stars * 0.1)) : Math.floor(rw.starCoins * 0.1);
     const expGain = victory ? Math.floor(rw.exp * (0.8 + stars * 0.1)) : 20;
     const materialDrops: { id: string; name: string; quantity: number }[] = [];
+    const equipmentDrops: Equipment[] = [];
     if (victory && rw.materials) {
       const mats = getMaterialsById ? getMaterialsById(rw.materials.map(m => m.id)) : {};
       rw.materials.forEach((m) => {
@@ -105,15 +119,32 @@ export function Battle() {
         }
       });
     }
+    if (victory && rw.equipment) {
+      rw.equipment.forEach((eqDrop) => {
+        if (Math.random() < eqDrop.dropRate) {
+          const eqTemplate = EQUIPMENTS.find((e) => e.id === eqDrop.id);
+          if (eqTemplate) {
+            equipmentDrops.push({ ...eqTemplate });
+          }
+        }
+      });
+    }
 
     if (victory) {
       addStarCoins(starCoin);
       gainExp(expGain);
       completeStage(stage.id, stars);
       stage.connections.forEach((cid) => unlockStage(cid));
-      updateMissionProgress('stage_cleared', 1);
+      updateMissionProgress('stage_cleared', { amount: 1, stageId: stage.id });
       updateMissionProgress('battle_won', 1);
       updateMissionProgress('ship_destroyed', enemyFleet.length);
+      updateMissionProgress('star_coins_earned', starCoin);
+      if (materialDrops.length > 0) {
+        addMaterials(materialDrops.map((m) => ({ id: m.id, quantity: m.quantity })));
+      }
+      if (equipmentDrops.length > 0) {
+        addEquipments(equipmentDrops);
+      }
     } else {
       addStarCoins(starCoin);
       gainExp(expGain);
@@ -145,22 +176,39 @@ export function Battle() {
         starCoins: starCoin,
         exp: expGain,
         materials: materialDrops,
-        equipments: [],
+        equipments: equipmentDrops,
       },
       starRating: stars,
       stageId: stage.id,
       turns: turn,
     });
 
-    setTimeout(() => navigate(`/result/b_${Date.now()}`), 1400);
+    setTimeout(() => {
+      resetBattle();
+      navigate(`/result/b_${Date.now()}`);
+    }, 1400);
   }, [finished, resultProcessed, victory, stage, playerFleet, enemyFleet, turn, battleLog,
     completeStage, addStarCoins, gainExp, unlockStage, updateMissionProgress, addBattleArchive,
-    setLastBattleResult, navigate, getMaterialsById]);
+    setLastBattleResult, navigate, getMaterialsById, resetBattle]);
 
   const selectedShip = useMemo(
     () => [...playerFleet, ...enemyFleet].find((s) => s.id === selectedShipId),
     [playerFleet, enemyFleet, selectedShipId],
   );
+
+  const selectedShipSkills = useMemo(() => {
+    if (!selectedShip || selectedShip.faction !== 'player') return [];
+    const skills: { skill: Skill; crewName: string; crewRole: string }[] = [];
+    selectedShip.crewIds.forEach((crewId) => {
+      const crew = crews.find((c) => c.id === crewId || c.id === `player-${crewId}`);
+      if (crew) {
+        crew.skills.forEach((skill) => {
+          skills.push({ skill, crewName: crew.name, crewRole: crew.role });
+        });
+      }
+    });
+    return skills;
+  }, [selectedShip, crews]);
 
   const allShips = useMemo(() => [...playerFleet, ...enemyFleet], [playerFleet, enemyFleet]);
   const occupiedKey = useMemo(() => {
@@ -192,7 +240,8 @@ export function Battle() {
       }
     } else if (actionMode === 'skill' && shipHere) {
       if (validTargetSet.has(shipHere.id)) {
-        useSkill('overcharge', shipHere.id);
+        const skillData = selectedShipSkills.find((s) => s.skill.id === activeSkillId)?.skill;
+        useSkill(activeSkillId || 'overcharge', shipHere.id, skillData);
       } else if (shipHere.faction === 'player') {
         selectShip(shipHere.id);
       }
@@ -210,11 +259,14 @@ export function Battle() {
   // 退出前确认
   const handleExit = () => {
     if (!finished) {
-      if (confirm('战斗进行中，确定退出吗？进度将会丢失')) {
+      if (window.confirm('战斗进行中，是否保存进度后退出？\n\n保存进度：下次可继续战斗\n放弃进度：战斗记录将丢失')) {
+        navigate('/starmap');
+      } else {
         resetBattle();
         navigate('/starmap');
       }
     } else {
+      resetBattle();
       navigate('/starmap');
     }
   };
@@ -493,15 +545,42 @@ export function Battle() {
                     >
                       <Target className="w-4 h-4 mr-1" />攻击 (2AP)
                     </Button>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      disabled={selectedShip.actionPoints < 3}
-                      onClick={() => setActionMode(actionMode === 'skill' ? 'none' : 'skill', 'overcharge')}
-                      className={actionMode === 'skill' ? 'shadow-glow ring-1 ring-energy-cyan' : ''}
-                    >
-                      <Zap className="w-4 h-4 mr-1" />战术技能 (3AP)
-                    </Button>
+                    {selectedShipSkills.length > 0 ? (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {selectedShipSkills.map(({ skill, crewName }) => {
+                          const SkillIcon = skill.type === 'attack' ? Swords :
+                            skill.type === 'heal' ? Heart :
+                            skill.type === 'buff' ? Shield : Zap;
+                          const isActive = actionMode === 'skill' && activeSkillId === skill.id;
+                          const disabled = selectedShip.actionPoints < skill.apCost;
+                          const variant = skill.type === 'attack' ? 'danger' :
+                            skill.type === 'heal' ? 'success' : 'primary';
+                          return (
+                            <Button
+                              key={skill.id}
+                              variant={variant as any}
+                              size="sm"
+                              disabled={disabled}
+                              onClick={() => setActionMode(isActive ? 'none' : 'skill', skill.id, skill)}
+                              className={`${isActive ? 'shadow-glow ring-1 ring-energy-cyan' : ''}`}
+                            >
+                              <SkillIcon className="w-4 h-4 mr-1" />
+                              {skill.name} ({skill.apCost}AP)
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={selectedShip.actionPoints < 3}
+                        onClick={() => setActionMode(actionMode === 'skill' ? 'none' : 'skill', 'overcharge')}
+                        className={actionMode === 'skill' ? 'shadow-glow ring-1 ring-energy-cyan' : ''}
+                      >
+                        <Zap className="w-4 h-4 mr-1" />战术技能 (3AP)
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"

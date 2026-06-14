@@ -19,7 +19,8 @@ export const MISSIONS: Mission[] = [
       exp: 200
     },
     storyUnlock: 'story_02',
-    trackType: 'stage_cleared'
+    trackType: 'stage_cleared',
+    requiredStageId: 'stage_01'
   },
   {
     id: 'mission_main_02',
@@ -40,7 +41,8 @@ export const MISSIONS: Mission[] = [
       equipmentId: 'weapon_03'
     },
     storyUnlock: 'story_04',
-    trackType: 'stage_cleared'
+    trackType: 'stage_cleared',
+    requiredStageId: 'stage_04'
   },
   {
     id: 'mission_main_03',
@@ -61,7 +63,8 @@ export const MISSIONS: Mission[] = [
       equipmentId: 'module_03'
     },
     storyUnlock: 'story_06',
-    trackType: 'stage_cleared'
+    trackType: 'stage_cleared',
+    requiredStageId: 'stage_06'
   },
   {
     id: 'mission_side_01',
