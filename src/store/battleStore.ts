@@ -91,6 +91,8 @@ const createInitialBattle = (
     actionMode: 'none',
     finished: false,
     floatingDamage: [],
+    totalDamageDealt: 0,
+    totalDamageTaken: 0,
   };
 };
 
@@ -144,6 +146,8 @@ export const useBattleStore = create<BattleStoreState>()(
   actionMode: 'none',
   finished: false,
   floatingDamage: [],
+  totalDamageDealt: 0,
+  totalDamageTaken: 0,
   profile: null,
   stage: null,
 
@@ -218,9 +222,20 @@ export const useBattleStore = create<BattleStoreState>()(
       const apCost = skill?.apCost ?? 3;
       if (ship.actionPoints >= apCost) {
         const skillType = skill?.type || 'attack';
+        const skillName = skill?.name || '';
         const skillRange = skill?.range ?? 5;
         const isFriendlyTarget = skillType === 'heal' || skillType === 'buff';
         const isMoveTarget = skillType === 'move';
+        const isTeamWide = skillType === 'buff' && 
+                           skill?.effect?.statusEffect?.statsMod?.attack !== undefined &&
+                           skill.effect.aoe === undefined &&
+                           (skillName.includes('全军') || skillName.includes('全队') || skillName.includes('全体'));
+
+        if (isTeamWide) {
+          get().useSkill(skillId, ship.id, skill);
+          return;
+        }
+
         let targets: string[] = [];
         let validMoves: { x: number; y: number }[] = [];
 
@@ -348,6 +363,7 @@ export const useBattleStore = create<BattleStoreState>()(
       selectedShipId: newAttacker.id,
       actionMode: 'none',
       validTargets: [],
+      totalDamageDealt: state.totalDamageDealt + damage,
     });
     setTimeout(() => get().clearFloatingDamage(), 1400);
     get().checkVictory();
@@ -390,9 +406,25 @@ export const useBattleStore = create<BattleStoreState>()(
       msg = `${caster.name} 施放【${skillName}】，移动到 (${tx}, ${ty})`;
       get().addFloatingDamage(caster.id, 0, 'move');
     } else if (isFriendlyType) {
-      const targets: Ship[] = isAoe
-        ? state.playerFleet.filter((s) => s.hp > 0)
-        : [state.playerFleet.find((s) => s.id === targetId) || caster].filter(Boolean) as Ship[];
+      const mainTarget = state.playerFleet.find((s) => s.id === targetId) || caster;
+      const isTeamWide = skill?.effect?.statusEffect?.statsMod?.attack !== undefined && 
+                         skill.effect.aoe === undefined && 
+                         (skillName.includes('全军') || skillName.includes('全队') || skillName.includes('全体'));
+      let targets: Ship[] = [];
+
+      if (isTeamWide) {
+        targets = state.playerFleet.filter((s) => s.hp > 0);
+      } else if (isAoe && mainTarget.position) {
+        const aoeRange = skill.effect.aoe || 0;
+        targets = state.playerFleet.filter((s) => {
+          if (s.hp <= 0 || !s.position) return false;
+          const dist = Math.abs(s.position.x - mainTarget.position!.x) + 
+                       Math.abs(s.position.y - mainTarget.position!.y);
+          return dist <= aoeRange;
+        });
+      } else {
+        targets = [mainTarget].filter(Boolean) as Ship[];
+      }
 
       targets.forEach((target) => {
         let healAmount = 0;
@@ -403,9 +435,6 @@ export const useBattleStore = create<BattleStoreState>()(
         }
         if (skill?.effect?.shieldRestore) {
           shieldRestore = Math.floor(target.maxShield * (skill.effect.shieldRestore / 100));
-        }
-        if (skillType === 'buff' && !skill?.effect?.heal && !skill?.effect?.shieldRestore) {
-          shieldRestore = 0;
         }
 
         let newStatusEffects = [...target.statusEffects];
@@ -448,9 +477,21 @@ export const useBattleStore = create<BattleStoreState>()(
         skill?.effect?.statusEffect ? '获得增益效果' : '施放辅助效果';
       msg = `${caster.name} 施放【${skillName}】，${targetNames} ${effectDesc}`;
     } else {
-      const targets: Ship[] = isAoe
-        ? state.enemyFleet.filter((e) => e.hp > 0)
-        : [state.enemyFleet.find((e) => e.id === targetId)].filter(Boolean) as Ship[];
+      const mainTarget = state.enemyFleet.find((e) => e.id === targetId);
+      let targets: Ship[] = [];
+      let skillDamage = 0;
+
+      if (isAoe && mainTarget && mainTarget.position && caster.position) {
+        const aoeRange = skill.effect.aoe || 0;
+        targets = state.enemyFleet.filter((e) => {
+          if (e.hp <= 0 || !e.position) return false;
+          const dist = Math.abs(e.position.x - mainTarget.position!.x) + 
+                       Math.abs(e.position.y - mainTarget.position!.y);
+          return dist <= aoeRange;
+        });
+      } else {
+        targets = [mainTarget].filter(Boolean) as Ship[];
+      }
 
       targets.forEach((target) => {
         let damage = 0;
@@ -461,6 +502,7 @@ export const useBattleStore = create<BattleStoreState>()(
         } else {
           damage = calculateDamage(caster, target, false);
         }
+        skillDamage += damage;
 
         let newTarget = { ...target };
         let remainDmg = damage;
@@ -494,6 +536,20 @@ export const useBattleStore = create<BattleStoreState>()(
 
       const targetNames = targets.map((t) => t.name).join('、');
       msg = `${caster.name} 施放【${skillName}】，对 ${targetNames} 造成伤害`;
+
+      set({
+        playerFleet: newPlayer,
+        enemyFleet: newEnemy,
+        actionMode: 'none',
+        validTargets: [],
+        validMoves: [],
+        activeSkillId: undefined,
+        totalDamageDealt: state.totalDamageDealt + skillDamage,
+      });
+      get().addLog({ type: 'skill', sourceId: caster.id, sourceName: caster.name, message: msg });
+      setTimeout(() => get().clearFloatingDamage(), 1400);
+      get().checkVictory();
+      return true;
     }
 
     if (!isMoveType) {
@@ -595,12 +651,14 @@ export const useBattleStore = create<BattleStoreState>()(
 
       let actions = enemy.maxActionPoints;
       const enemyCur = { ...enemy };
+      let roundDmg = 0;
 
       // 若在攻击范围内，先攻击
       if (isInAttackRange(enemyCur, nearest) && actions >= 2) {
         const hit = chance(calculateHitChance(enemyCur, nearest));
         const crit = isCritical(50);
         const dmg = hit ? calculateDamage(enemyCur, nearest, crit) : 0;
+        roundDmg = dmg;
         let newTarget = { ...nearest };
         if (hit && dmg > 0) {
           let remain = dmg;
@@ -652,7 +710,7 @@ export const useBattleStore = create<BattleStoreState>()(
         enemyShips = enemyShips.map((s) => (s.id === enemyCur.id ? updatedEnemy : s));
       }
 
-      set({ playerFleet: [...playerShips], enemyFleet: [...enemyShips] });
+      set({ playerFleet: [...playerShips], enemyFleet: [...enemyShips], totalDamageTaken: state.totalDamageTaken + roundDmg });
       get().checkVictory();
       setTimeout(() => processNext(idx + 1), 700);
     };
@@ -665,6 +723,8 @@ export const useBattleStore = create<BattleStoreState>()(
     if (state.finished) return;
     let playerShips = [...state.playerFleet];
     let enemyShips = [...state.enemyFleet];
+    let envPlayerDmg = 0;
+    let statusPlayerDmg = 0;
 
     state.environmentTiles.forEach((tile) => {
       const key = posKey(tile.position);
@@ -675,6 +735,7 @@ export const useBattleStore = create<BattleStoreState>()(
           if (tile.type === 'asteroid' && tile.damage) {
             const dmg = tile.damage;
             if (ship.faction === 'player') {
+              envPlayerDmg += dmg;
               playerShips = playerShips.map((s) =>
                 s.id === ship.id ? { ...s, hp: Math.max(0, s.hp - dmg) } : s,
               );
@@ -712,6 +773,7 @@ export const useBattleStore = create<BattleStoreState>()(
           } else if (tile.type === 'radiation' && tile.damage) {
             const dmg = Math.floor(tile.damage * 0.6);
             if (ship.faction === 'player') {
+              envPlayerDmg += dmg;
               playerShips = playerShips.map((s) =>
                 s.id === ship.id ? { ...s, hp: Math.max(0, s.hp - dmg) } : s,
               );
@@ -729,7 +791,7 @@ export const useBattleStore = create<BattleStoreState>()(
       });
     });
 
-    set({ playerFleet: playerShips, enemyFleet: enemyShips });
+    set({ playerFleet: playerShips, enemyFleet: enemyShips, totalDamageTaken: state.totalDamageTaken + envPlayerDmg });
     setTimeout(() => get().clearFloatingDamage(), 1000);
     get().checkVictory();
 
@@ -757,6 +819,7 @@ export const useBattleStore = create<BattleStoreState>()(
           const d = eff.damagePerTurn;
           if (d > 0) {
             newHp = Math.max(0, newHp - d);
+            if (newShip.faction === 'player') statusPlayerDmg += d;
             statusLogs.push(`🩸 ${newShip.name} 受到【${eff.name}】效果，损失 ${d} HP`);
             get().addFloatingDamage(newShip.id, d, 'damage');
           }
@@ -777,6 +840,11 @@ export const useBattleStore = create<BattleStoreState>()(
 
     if (statusLogs.length > 0) {
       statusLogs.forEach((msg) => get().addLog({ type: 'status', message: msg }));
+    }
+
+    // 累计状态效果伤害
+    if (statusPlayerDmg > 0) {
+      set({ totalDamageTaken: get().totalDamageTaken + statusPlayerDmg });
     }
 
     // 进入下一回合玩家阶段

@@ -39,8 +39,15 @@ export function BattleResult() {
     );
   }
 
-  const { victory, rewards, starRating, turns } = result;
+  const { victory, rewards, starRating, turns, totalDamageDealt, totalDamageTaken, enemiesDestroyed, totalEnemies, shipsSurvived, totalShips } = result;
   const autoClaimMissions = missions.filter((m) => m.completed && !m.claimed).slice(0, 3);
+
+  const survivalRate = totalShips > 0 ? Math.round(shipsSurvived / totalShips * 100) : 0;
+  const dmgScore = Math.min(5, Math.max(1, Math.floor(totalDamageDealt / 5000)));
+  const survivalScore = survivalRate >= 100 ? 5 : survivalRate >= 75 ? 3 : survivalRate >= 50 ? 2 : 1;
+  const turnScore = turns <= 5 ? 5 : turns <= 10 ? 3 : turns <= 15 ? 2 : 1;
+  const totalScore = Math.round((dmgScore + survivalScore + turnScore + starRating) / 3);
+  const ratingLetter = ['D', 'C', 'B', 'A', 'S'][Math.min(4, Math.max(0, totalScore - 1))];
 
   const handleRematch = () => {
     resetBattle();
@@ -224,10 +231,10 @@ export function BattleResult() {
           </div>
           <div className="grid grid-cols-4 gap-3">
             {[
-              { label: '击毁敌舰', value: '3', color: 'text-danger-red', icon: Skull },
-              { label: '总伤害量', value: (12000 + starRating * 4000).toLocaleString(), color: 'text-danger-orange', icon: TrendingUp },
-              { label: '舰队存活率', value: `${Math.max(40, 100 - turns * 5)}%`, color: 'text-life-green', icon: Shield },
-              { label: '战术评分', value: ['D', 'C', 'B', 'A', 'S'][Math.min(4, starRating + 1)], color: 'text-danger-yellow', icon: Award },
+              { label: '击毁敌舰', value: `${enemiesDestroyed}/${totalEnemies}`, color: 'text-danger-red', icon: Skull },
+              { label: '总伤害量', value: totalDamageDealt.toLocaleString(), color: 'text-danger-orange', icon: TrendingUp },
+              { label: '舰队存活率', value: `${survivalRate}%`, color: 'text-life-green', icon: Shield },
+              { label: '战术评分', value: ratingLetter, color: 'text-danger-yellow', icon: Award },
             ].map((item, i) => {
               const Ic = item.icon;
               return (

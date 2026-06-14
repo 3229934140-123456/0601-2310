@@ -147,6 +147,13 @@ export function Battle() {
       gainExp(expGain);
     }
 
+    const totalDamageDealt = useBattleStore.getState().totalDamageDealt;
+    const totalDamageTaken = useBattleStore.getState().totalDamageTaken;
+    const enemiesDestroyed = enemyFleet.filter((e) => e.hp <= 0).length;
+    const totalEnemies = enemyFleet.length;
+    const shipsSurvived = playerFleet.filter((s) => s.hp > 0).length;
+    const totalShips = playerFleet.length;
+
     addBattleArchive({
       id: `arch_${Date.now()}`,
       stageId: stage.id,
@@ -155,8 +162,8 @@ export function Battle() {
       victory: !!victory,
       turns: turn,
       starRating: stars,
-      damageDealt: 0,
-      damageTaken: 0,
+      damageDealt: totalDamageDealt,
+      damageTaken: totalDamageTaken,
       details: battleLog,
       rewards: {
         starCoins: starCoin,
@@ -176,7 +183,14 @@ export function Battle() {
       },
       starRating: stars,
       stageId: stage.id,
+      stageName: stage.name,
       turns: turn,
+      totalDamageDealt,
+      totalDamageTaken,
+      enemiesDestroyed,
+      totalEnemies,
+      shipsSurvived,
+      totalShips,
     });
 
     setTimeout(() => {

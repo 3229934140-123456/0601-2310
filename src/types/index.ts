@@ -181,6 +181,8 @@ export interface BattleState {
   victory?: boolean;
   finished: boolean;
   floatingDamage: { id: string; shipId: string; value: number; x: number; y: number; type: 'damage' | 'heal' | 'miss' | 'shield' | 'move' }[];
+  totalDamageDealt: number;
+  totalDamageTaken: number;
 }
 
 export interface Stage {
@@ -297,6 +299,13 @@ export interface GameState {
     };
     starRating: 0 | 1 | 2 | 3;
     stageId: string;
+    stageName: string;
     turns: number;
+    totalDamageDealt: number;
+    totalDamageTaken: number;
+    enemiesDestroyed: number;
+    totalEnemies: number;
+    shipsSurvived: number;
+    totalShips: number;
   };
 }
