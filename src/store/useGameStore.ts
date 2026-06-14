@@ -635,17 +635,16 @@ export const useGameStore = create<GameStore>()(
                 starRating: Math.max(s.starRating, starRating) as 0 | 1 | 2 | 3,
               };
             }
-            if (stage.connections.includes(s.id)) {
-              return { ...s, unlocked: true };
-            }
             return s;
           });
 
           const totalStagesCleared = state.profile.totalStagesCleared + (stage.completed ? 0 : 1);
-          const totalBattlesWon = state.profile.totalBattlesWon + 1;
+          const totalBattlesWon = state.profile.totalBattlesWon + (stage.completed ? 0 : 1);
 
-          get().updateMissionProgress('stage_cleared');
-          get().updateMissionProgress('battle_won');
+          if (!stage.completed) {
+            get().updateMissionProgress('stage_cleared', { amount: 1, stageId });
+            get().updateMissionProgress('battle_won', 1);
+          }
 
           return {
             stages: newStages,

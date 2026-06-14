@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Crosshair, Shield, Zap, Heart, Move, Users, Target, Swords, Wrench, BookOpen, Flag, X, ChevronRight, Radar, AlertTriangle } from 'lucide-react';
+import { Crosshair, Shield, Zap, Heart, Move, Users, Target, Swords, Wrench, BookOpen, Flag, X, ChevronRight, Radar, AlertTriangle, Navigation } from 'lucide-react';
 import { StarField } from '../components/StarField';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -135,10 +135,7 @@ export function Battle() {
       gainExp(expGain);
       completeStage(stage.id, stars);
       stage.connections.forEach((cid) => unlockStage(cid));
-      updateMissionProgress('stage_cleared', { amount: 1, stageId: stage.id });
-      updateMissionProgress('battle_won', 1);
       updateMissionProgress('ship_destroyed', enemyFleet.length);
-      updateMissionProgress('star_coins_earned', starCoin);
       if (materialDrops.length > 0) {
         addMaterials(materialDrops.map((m) => ({ id: m.id, quantity: m.quantity })));
       }
@@ -148,7 +145,6 @@ export function Battle() {
     } else {
       addStarCoins(starCoin);
       gainExp(expGain);
-      updateMissionProgress('battle_won', 0);
     }
 
     addBattleArchive({
@@ -238,12 +234,16 @@ export function Battle() {
       } else {
         selectShip(shipHere.id);
       }
-    } else if (actionMode === 'skill' && shipHere) {
-      if (validTargetSet.has(shipHere.id)) {
-        const skillData = selectedShipSkills.find((s) => s.skill.id === activeSkillId)?.skill;
+    } else if (actionMode === 'skill') {
+      const skillData = selectedShipSkills.find((s) => s.skill.id === activeSkillId)?.skill;
+      if (skillData?.type === 'move' && validMoveKey.has(posKey(pos)) && !occupiedKey.has(posKey(pos))) {
+        useSkill(activeSkillId || 'overcharge', `${pos.x},${pos.y}`, skillData);
+      } else if (shipHere && validTargetSet.has(shipHere.id)) {
         useSkill(activeSkillId || 'overcharge', shipHere.id, skillData);
-      } else if (shipHere.faction === 'player') {
-        selectShip(shipHere.id);
+      } else if (shipHere) {
+        if (shipHere.faction === 'player') selectShip(shipHere.id);
+      } else {
+        selectShip(null);
       }
     } else {
       if (shipHere) selectShip(shipHere.id);
@@ -456,11 +456,18 @@ export function Battle() {
                       left: fd.x,
                       top: fd.y,
                       transform: 'translateX(-50%)',
-                      color: fd.type === 'damage' ? '#FF2E63' : fd.type === 'heal' ? '#39FF14' : '#8B9DC3',
+                      color:
+                        fd.type === 'damage' ? '#FF2E63' :
+                        fd.type === 'heal' ? '#39FF14' :
+                        fd.type === 'shield' ? '#00D4FF' :
+                        fd.type === 'move' ? '#FFC93C' : '#8B9DC3',
                       textShadow: '0 0 8px rgba(0,0,0,0.8), 0 0 4px currentColor',
                     }}
                   >
-                    {fd.type === 'miss' ? 'MISS' : (fd.type === 'heal' ? '+' : '-') + fd.value}
+                    {fd.type === 'miss' ? 'MISS' :
+                      fd.type === 'shield' ? `🛡+${fd.value}` :
+                      fd.type === 'move' ? '💨' :
+                      fd.type === 'heal' ? `+${fd.value}` : `-${fd.value}`}
                   </div>
                 ))}
               </div>
@@ -550,11 +557,13 @@ export function Battle() {
                         {selectedShipSkills.map(({ skill, crewName }) => {
                           const SkillIcon = skill.type === 'attack' ? Swords :
                             skill.type === 'heal' ? Heart :
-                            skill.type === 'buff' ? Shield : Zap;
+                            skill.type === 'buff' ? Shield :
+                            skill.type === 'move' ? Navigation : Zap;
                           const isActive = actionMode === 'skill' && activeSkillId === skill.id;
                           const disabled = selectedShip.actionPoints < skill.apCost;
                           const variant = skill.type === 'attack' ? 'danger' :
-                            skill.type === 'heal' ? 'success' : 'primary';
+                            skill.type === 'heal' ? 'success' :
+                            skill.type === 'move' ? 'warning' : 'primary';
                           return (
                             <Button
                               key={skill.id}
@@ -563,6 +572,7 @@ export function Battle() {
                               disabled={disabled}
                               onClick={() => setActionMode(isActive ? 'none' : 'skill', skill.id, skill)}
                               className={`${isActive ? 'shadow-glow ring-1 ring-energy-cyan' : ''}`}
+                              title={`${crewName}：${skill.description}`}
                             >
                               <SkillIcon className="w-4 h-4 mr-1" />
                               {skill.name} ({skill.apCost}AP)

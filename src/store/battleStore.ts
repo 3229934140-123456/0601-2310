@@ -115,7 +115,7 @@ interface BattleStoreState extends BattleState {
   runEnemyAI: () => void;
 
   checkVictory: () => void;
-  addFloatingDamage: (shipId: string, value: number, type: 'damage' | 'heal' | 'miss') => void;
+  addFloatingDamage: (shipId: string, value: number, type: 'damage' | 'heal' | 'miss' | 'shield' | 'move') => void;
   clearFloatingDamage: () => void;
 
   addLog: (entry: Omit<LogEntry, 'id' | 'turn' | 'timestamp'>) => void;
@@ -218,11 +218,38 @@ export const useBattleStore = create<BattleStoreState>()(
       const apCost = skill?.apCost ?? 3;
       if (ship.actionPoints >= apCost) {
         const skillType = skill?.type || 'attack';
+        const skillRange = skill?.range ?? 5;
         const isFriendlyTarget = skillType === 'heal' || skillType === 'buff';
-        const targets = isFriendlyTarget
-          ? state.playerFleet.filter((s) => s.hp > 0).map((s) => s.id)
-          : state.enemyFleet.filter((e) => e.hp > 0).map((e) => e.id);
-        set({ actionMode: 'skill', validTargets: targets, activeSkillId: skillId });
+        const isMoveTarget = skillType === 'move';
+        let targets: string[] = [];
+        let validMoves: { x: number; y: number }[] = [];
+
+        if (isMoveTarget && ship.position) {
+          for (let x = 0; x < state.gridSize.width; x++) {
+            for (let y = 0; y < state.gridSize.height; y++) {
+              const dist = Math.abs(x - ship.position.x) + Math.abs(y - ship.position.y);
+              if (dist > 0 && dist <= skillRange) {
+                const occupied = [...state.playerFleet, ...state.enemyFleet].some(
+                  (s) => s.hp > 0 && s.position && s.position.x === x && s.position.y === y
+                );
+                if (!occupied) {
+                  validMoves.push({ x, y });
+                }
+              }
+            }
+          }
+        } else if (ship.position) {
+          const sourceList = isFriendlyTarget ? state.playerFleet : state.enemyFleet;
+          targets = sourceList
+            .filter((t) => {
+              if (t.hp <= 0 || !t.position) return false;
+              const dist = Math.abs(t.position.x - ship.position!.x) + Math.abs(t.position.y - ship.position!.y);
+              return dist <= skillRange;
+            })
+            .map((t) => t.id);
+        }
+
+        set({ actionMode: 'skill', validTargets: targets, validMoves, activeSkillId: skillId });
       }
     } else {
       set({ actionMode: mode, activeSkillId: skillId });
@@ -337,15 +364,33 @@ export const useBattleStore = create<BattleStoreState>()(
 
     const skillType = skill?.type || 'attack';
     const skillName = skill?.name || '战术技能';
-    const isHealType = skillType === 'heal' || skillType === 'buff';
+    const isFriendlyType = skillType === 'heal' || skillType === 'buff';
+    const isMoveType = skillType === 'move';
     const isAoe = skill?.effect?.aoe !== undefined && skill.effect.aoe > 0;
 
     let newPlayer = [...state.playerFleet];
     let newEnemy = [...state.enemyFleet];
     let msg = '';
 
-    if (isHealType) {
-      const targets = isAoe
+    if (isMoveType && skill?.effect?.teleport && caster.position) {
+      const [tx, ty] = targetId.includes(',') ? targetId.split(',').map(Number) : [NaN, NaN];
+      if (isNaN(tx) || isNaN(ty)) return false;
+      const dist = Math.abs(tx - caster.position.x) + Math.abs(ty - caster.position.y);
+      if (dist > (skill.range || 6) || dist === 0) return false;
+      const occupied = [...state.playerFleet, ...state.enemyFleet].some(
+        (s) => s.hp > 0 && s.position && s.position.x === tx && s.position.y === ty
+      );
+      if (occupied) return false;
+
+      newPlayer = newPlayer.map((s) =>
+        s.id === caster.id
+          ? { ...s, position: { x: tx, y: ty }, actionPoints: s.actionPoints - apCost }
+          : s
+      );
+      msg = `${caster.name} 施放【${skillName}】，移动到 (${tx}, ${ty})`;
+      get().addFloatingDamage(caster.id, 0, 'move');
+    } else if (isFriendlyType) {
+      const targets: Ship[] = isAoe
         ? state.playerFleet.filter((s) => s.hp > 0)
         : [state.playerFleet.find((s) => s.id === targetId) || caster].filter(Boolean) as Ship[];
 
@@ -356,8 +401,11 @@ export const useBattleStore = create<BattleStoreState>()(
         if (skill?.effect?.heal) {
           healAmount = Math.floor(target.maxHp * (skill.effect.heal / 100));
         }
-        if (skillType === 'buff' && skill?.effect?.heal === undefined) {
-          shieldRestore = Math.floor(target.maxShield * 0.5);
+        if (skill?.effect?.shieldRestore) {
+          shieldRestore = Math.floor(target.maxShield * (skill.effect.shieldRestore / 100));
+        }
+        if (skillType === 'buff' && !skill?.effect?.heal && !skill?.effect?.shieldRestore) {
+          shieldRestore = 0;
         }
 
         let newStatusEffects = [...target.statusEffects];
@@ -387,12 +435,20 @@ export const useBattleStore = create<BattleStoreState>()(
         if (healAmount > 0) {
           get().addFloatingDamage(target.id, healAmount, 'heal');
         }
+        if (shieldRestore > 0) {
+          get().addFloatingDamage(target.id, shieldRestore, 'shield');
+        }
       });
 
       const targetNames = targets.map((t) => t.name).join('、');
-      msg = `${caster.name} 施放【${skillName}】，${targetNames} 获得增益效果`;
+      const effectDesc =
+        skill?.effect?.heal && skill?.effect?.shieldRestore ? '恢复生命与护盾' :
+        skill?.effect?.heal ? '恢复生命' :
+        skill?.effect?.shieldRestore ? '恢复护盾' :
+        skill?.effect?.statusEffect ? '获得增益效果' : '施放辅助效果';
+      msg = `${caster.name} 施放【${skillName}】，${targetNames} ${effectDesc}`;
     } else {
-      const targets = isAoe
+      const targets: Ship[] = isAoe
         ? state.enemyFleet.filter((e) => e.hp > 0)
         : [state.enemyFleet.find((e) => e.id === targetId)].filter(Boolean) as Ship[];
 
@@ -440,9 +496,11 @@ export const useBattleStore = create<BattleStoreState>()(
       msg = `${caster.name} 施放【${skillName}】，对 ${targetNames} 造成伤害`;
     }
 
-    newPlayer = newPlayer.map((s) =>
-      s.id === caster.id ? { ...s, actionPoints: s.actionPoints - apCost } : s,
-    );
+    if (!isMoveType) {
+      newPlayer = newPlayer.map((s) =>
+        s.id === caster.id ? { ...s, actionPoints: s.actionPoints - apCost } : s,
+      );
+    }
 
     get().addLog({ type: 'skill', sourceId: caster.id, sourceName: caster.name, message: msg });
     set({
@@ -450,6 +508,7 @@ export const useBattleStore = create<BattleStoreState>()(
       enemyFleet: newEnemy,
       actionMode: 'none',
       validTargets: [],
+      validMoves: [],
       activeSkillId: undefined,
     });
     setTimeout(() => get().clearFloatingDamage(), 1400);
@@ -674,10 +733,56 @@ export const useBattleStore = create<BattleStoreState>()(
     setTimeout(() => get().clearFloatingDamage(), 1000);
     get().checkVictory();
 
+    // 进入下一回合玩家阶段前，结算状态效果（healPerTurn / damagePerTurn）和更新状态持续时间
+    let processedPlayer = [...playerShips];
+    let processedEnemy = [...enemyShips];
+    const statusLogs: string[] = [];
+
+    const processShipStatus = (ship: Ship): Ship => {
+      if (ship.hp <= 0) return ship;
+      let newShip = { ...ship };
+      let newHp = newShip.hp;
+      let newShield = newShip.shield;
+
+      newShip.statusEffects.forEach((eff) => {
+        if (eff.healPerTurn) {
+          const h = Math.floor(newShip.maxHp * (eff.healPerTurn / 100));
+          if (h > 0 && newHp < newShip.maxHp) {
+            newHp = Math.min(newShip.maxHp, newHp + h);
+            statusLogs.push(`💚 ${newShip.name} 受到【${eff.name}】效果，恢复 ${h} HP`);
+            get().addFloatingDamage(newShip.id, h, 'heal');
+          }
+        }
+        if (eff.damagePerTurn) {
+          const d = eff.damagePerTurn;
+          if (d > 0) {
+            newHp = Math.max(0, newHp - d);
+            statusLogs.push(`🩸 ${newShip.name} 受到【${eff.name}】效果，损失 ${d} HP`);
+            get().addFloatingDamage(newShip.id, d, 'damage');
+          }
+        }
+      });
+
+      newShip.hp = newHp;
+      newShip.shield = newShield;
+      newShip.statusEffects = newShip.statusEffects
+        .map((eff) => ({ ...eff, duration: eff.duration - 1 }))
+        .filter((eff) => eff.duration > 0);
+
+      return newShip;
+    };
+
+    processedPlayer = processedPlayer.map(processShipStatus);
+    processedEnemy = processedEnemy.map(processShipStatus);
+
+    if (statusLogs.length > 0) {
+      statusLogs.forEach((msg) => get().addLog({ type: 'status', message: msg }));
+    }
+
     // 进入下一回合玩家阶段
     const newTurn = state.turn + 1;
-    const resetPlayer = playerShips.map((s) => (s.hp > 0 ? { ...s, actionPoints: s.maxActionPoints } : s));
-    const resetEnemy = enemyShips.map((s) => (s.hp > 0 ? { ...s, actionPoints: s.maxActionPoints } : s));
+    const resetPlayer = processedPlayer.map((s) => (s.hp > 0 ? { ...s, actionPoints: s.maxActionPoints } : s));
+    const resetEnemy = processedEnemy.map((s) => (s.hp > 0 ? { ...s, actionPoints: s.maxActionPoints } : s));
 
     get().addLog({
       type: 'system',
@@ -685,6 +790,7 @@ export const useBattleStore = create<BattleStoreState>()(
     });
     setTimeout(() => {
       set({ turn: newTurn, phase: 'player', playerFleet: resetPlayer, enemyFleet: resetEnemy });
+      get().checkVictory();
     }, 500);
   },
 

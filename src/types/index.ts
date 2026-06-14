@@ -28,13 +28,15 @@ export interface Skill {
   cooldown: number;
   currentCooldown: number;
   apCost: number;
-  type: 'attack' | 'heal' | 'buff' | 'debuff' | 'utility';
+  type: 'attack' | 'heal' | 'buff' | 'debuff' | 'utility' | 'move';
   range: number;
   effect: {
     damage?: number;
     heal?: number;
+    shieldRestore?: number;
     statusEffect?: StatusEffect;
     aoe?: number;
+    teleport?: boolean;
   };
 }
 
@@ -150,7 +152,7 @@ export interface LogEntry {
   id: string;
   turn: number;
   timestamp: number;
-  type: 'attack' | 'defend' | 'move' | 'skill' | 'environment' | 'heal' | 'system';
+  type: 'attack' | 'defend' | 'move' | 'skill' | 'environment' | 'heal' | 'system' | 'status';
   sourceId?: string;
   sourceName?: string;
   targetId?: string;
@@ -178,7 +180,7 @@ export interface BattleState {
   activeSkillId?: string;
   victory?: boolean;
   finished: boolean;
-  floatingDamage: { id: string; shipId: string; value: number; x: number; y: number; type: 'damage' | 'heal' | 'miss' }[];
+  floatingDamage: { id: string; shipId: string; value: number; x: number; y: number; type: 'damage' | 'heal' | 'miss' | 'shield' | 'move' }[];
 }
 
 export interface Stage {

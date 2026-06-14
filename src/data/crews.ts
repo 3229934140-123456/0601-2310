@@ -262,7 +262,7 @@ export const CREWS: Crew[] = [
         type: 'heal',
         range: 3,
         effect: {
-          heal: 50
+          shieldRestore: 50
         }
       }
     ],
@@ -304,9 +304,11 @@ export const CREWS: Crew[] = [
         cooldown: 3,
         currentCooldown: 0,
         apCost: 2,
-        type: 'utility',
+        type: 'move',
         range: 6,
-        effect: {}
+        effect: {
+          teleport: true
+        }
       }
     ],
     avatar: 'pilot_jifeng',
